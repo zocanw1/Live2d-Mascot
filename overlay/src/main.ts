@@ -1,6 +1,7 @@
 import { Application, Ticker } from 'pixi.js';
 import { Live2DModel, config as live2dConfig } from 'pixi-live2d-display';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 // Bridge JS logs to Rust trace logger
 const origLog = console.log;
@@ -234,29 +235,32 @@ function onTick(_deltaTime: number) {
   }
 }
 
-// Smart click-through: check hit area
+// Click-through: window SELALU tembus ke app di belakang karakter, supaya
+// app di belakang mascot tetap bisa diklik. Interaksi (ekspresi) dipicu via
+// global hotkey Ctrl+Shift+E, bukan klik mouse.
 async function checkHitTest() {
-  if (!model || config.clickThroughLock) return;
-
+  if (config.clickThroughLock) return; // lock = biarkan window menangkap klik
   try {
-    // Click-through berbasis AREA (bounds), bukan alpha pixel. Dengan begitu
-    // window tidak lagi jadi click-through saat karakter transparan, sehingga
-    // event klik tetap sampai ke canvas (ekspresi bisa dipicu). Window hanya
-    // tembus ke desktop saat kursor berada DI LUAR area karakter.
-    // Pakai cachedBounds agar konsisten walau model sedang invisible.
-    const b = cachedBounds;
-    const rect = canvas.getBoundingClientRect();
-    const c = osCursorCss();
-    const mx = c.x - rect.left;
-    const my = c.y - rect.top;
-
-    const inside =
-      b.width > 0 &&
-      mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height;
-
-    await invoke('set_ignore_cursor_events', { ignore: !inside });
+    await invoke('set_ignore_cursor_events', { ignore: true });
   } catch (e) {
     // Ignore errors during hit test
+  }
+}
+
+// Picu ekspresi / motion acak pada model.
+async function triggerRandomExpression() {
+  if (!model) return;
+  try {
+    const expressions = (model.internalModel as any).expressionManager?.definitions;
+    if (expressions && expressions.length > 0) {
+      const randomExpr = expressions[Math.floor(Math.random() * expressions.length)];
+      const exprName = randomExpr.name || randomExpr.file;
+      if (exprName) {
+        await model.expression(exprName);
+      }
+    }
+  } catch (e) {
+    // Ignore expression failure
   }
 }
 
@@ -266,25 +270,10 @@ function setupEventListeners() {
     lastMousePos = { x: e.clientX, y: e.clientY };
   });
 
-  // Drag & zoom DINONAKTIFKAN di overlay. Posisi/scale hanya bisa diatur
-  // melalui Master App. Dengan begitu, selama karakter tidak sedang diatur di
-  // master, ia tidak pernah "isDragging" -> hover langsung transparan penuh.
-  canvas.addEventListener('click', async (e) => {
-    if (!model || config.clickThroughLock) return;
-
-    // Trigger random expression or motion on tap
-    try {
-      const expressions = (model.internalModel as any).expressionManager?.definitions;
-      if (expressions && expressions.length > 0) {
-        const randomExpr = expressions[Math.floor(Math.random() * expressions.length)];
-        const exprName = randomExpr.name || randomExpr.file;
-        if (exprName) {
-          await model.expression(exprName);
-        }
-      }
-    } catch (e) {
-      // Ignore expression failure
-    }
+  // Ekspresi dipicu via global hotkey (Ctrl+Shift+E) dari Rust. Klik mouse
+  // tidak dipakai karena window click-through (menembus ke app di belakang).
+  listen('trigger-expression', () => {
+    triggerRandomExpression();
   });
 }
 

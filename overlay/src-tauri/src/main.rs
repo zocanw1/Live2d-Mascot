@@ -1,5 +1,7 @@
 use std::sync::Mutex;
 use std::io::Write;
+use tauri::{Emitter, Manager};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 fn log_trace(msg: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(r"C:\coding\AI\Star-Stella\live2d-mascot\trace.log") {
@@ -143,6 +145,7 @@ pub fn run() {
 
     log_trace("building tauri app");
     let result = tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .register_uri_scheme_protocol("live2d", |_app, request| {
             let path = request.uri().path();
             log_trace(&format!("live2d protocol request: {}", path));
@@ -182,8 +185,24 @@ pub fn run() {
             get_init_data,
             get_cursor_pos,
         ])
-        .setup(|_app| {
+        .setup(|app| {
             log_trace("setup hook called");
+
+            // Global hotkey Ctrl+Shift+E -> picu ekspresi acak.
+            // Window overlay selalu click-through (klik menembus ke app di
+            // belakang), jadi ekspresi dipicu via hotkey, bukan klik mouse.
+            let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyE);
+            let app_handle = app.handle().clone();
+            app.global_shortcut()
+                .on_shortcut(shortcut, move |_app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        if let Some(win) = app_handle.get_webview_window("main") {
+                            let _ = win.emit("trigger-expression", ());
+                            log_trace("hotkey trigger-expression emitted");
+                        }
+                    }
+                })?;
+            log_trace("global shortcut registered");
             Ok(())
         })
         .on_window_event(|_window, event| {
