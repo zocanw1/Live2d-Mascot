@@ -188,6 +188,20 @@ pub fn run() {
         .setup(|app| {
             log_trace("setup hook called");
 
+            // Buang title bar putih & buat window menutupi seluruh monitor.
+            // (fullscreen:true di config menyebabkan title bar muncul di Windows
+            // untuk window transparan; kita pakai borderless + size monitor).
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_decorations(false);
+                if let Ok(Some(monitor)) = win.primary_monitor() {
+                    let size = monitor.size();
+                    let pos = monitor.position();
+                    let _ = win.set_size(tauri::PhysicalSize::<u32>::new(size.width, size.height));
+                    let _ = win.set_position(tauri::PhysicalPosition::<i32>::new(pos.x, pos.y));
+                    log_trace(&format!("window sized to monitor {}x{}", size.width, size.height));
+                }
+            }
+
             // Global hotkey Ctrl+Shift+E -> picu ekspresi acak.
             // Window overlay selalu click-through (klik menembus ke app di
             // belakang), jadi ekspresi dipicu via hotkey, bukan klik mouse.
