@@ -100,7 +100,7 @@ async function testPositionApply() {
 
         <div class="setting-group">
           <label class="setting-toggle">
-            <input type="checkbox" v-model="settingsStore.overlayConfig.lookAtEnabled" @change="saveAll" :disabled="overlayStore.isRunning" />
+            <input type="checkbox" v-model="settingsStore.overlayConfig.lookAtEnabled" @change="saveAll" />
             <span class="toggle-slider"></span>
             <span class="toggle-label">Mouse Look-At (eyes follow cursor)</span>
           </label>

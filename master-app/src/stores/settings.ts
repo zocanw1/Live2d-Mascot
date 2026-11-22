@@ -1,9 +1,7 @@
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { ref } from 'vue';
 import type { OverlayConfig, AppSettings } from '@/types';
 import { invoke } from '@tauri-apps/api/core';
-import { BaseDirectory, readTextFile, writeTextFile, exists } from '@tauri-apps/plugin-fs';
-import { join } from '@tauri-apps/api/path';
 
 const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   modelId: '',
@@ -34,17 +32,15 @@ export const useSettingsStore = defineStore('settings', () => {
   async function loadSettings() {
     isLoading.value = true;
     try {
-      const configPath = await getConfigPath();
-      if (await exists(configPath, { baseDir: BaseDirectory.AppData })) {
-        const content = await readTextFile(configPath, { baseDir: BaseDirectory.AppData });
-        const saved = JSON.parse(content);
+      const settingsContent = await invoke('load_config_file', { filename: 'settings.json' }) as string;
+      if (settingsContent) {
+        const saved = JSON.parse(settingsContent);
         settings.value = { ...DEFAULT_SETTINGS, ...saved };
       }
 
-      const overlayConfigPath = await getOverlayConfigPath();
-      if (await exists(overlayConfigPath, { baseDir: BaseDirectory.AppData })) {
-        const content = await readTextFile(overlayConfigPath, { baseDir: BaseDirectory.AppData });
-        const saved = JSON.parse(content);
+      const overlayContent = await invoke('load_config_file', { filename: 'overlay-config.json' }) as string;
+      if (overlayContent) {
+        const saved = JSON.parse(overlayContent);
         overlayConfig.value = { ...DEFAULT_OVERLAY_CONFIG, ...saved };
       }
     } catch (e) {
@@ -56,8 +52,10 @@ export const useSettingsStore = defineStore('settings', () => {
 
   async function saveSettings() {
     try {
-      const configPath = await getConfigPath();
-      await writeTextFile(configPath, JSON.stringify(settings.value, null, 2), { baseDir: BaseDirectory.AppData });
+      await invoke('save_config_file', {
+        filename: 'settings.json',
+        content: JSON.stringify(settings.value, null, 2),
+      });
     } catch (e) {
       console.error('saveSettings error:', e);
     }
@@ -65,12 +63,13 @@ export const useSettingsStore = defineStore('settings', () => {
 
   async function saveOverlayConfig() {
     try {
-      const configPath = await getOverlayConfigPath();
-      await writeTextFile(configPath, JSON.stringify(overlayConfig.value, null, 2), { baseDir: BaseDirectory.AppData });
-      
-      if (overlayConfig.value.modelId) {
-        await invoke('notify_overlay_config_change', { config: overlayConfig.value });
-      }
+      await invoke('save_config_file', {
+        filename: 'overlay-config.json',
+        content: JSON.stringify(overlayConfig.value, null, 2),
+      });
+
+      // Selalu push runtime config (live-update lookAtEnabled/opacity di overlay).
+      await invoke('notify_overlay_config_change', { config: overlayConfig.value });
     } catch (e) {
       console.error('saveOverlayConfig error:', e);
     }
@@ -89,24 +88,6 @@ export const useSettingsStore = defineStore('settings', () => {
   function resetOverlayConfig() {
     overlayConfig.value = { ...DEFAULT_OVERLAY_CONFIG };
     saveOverlayConfig();
-  }
-
-  async function getConfigPath(): Promise<string> {
-    try {
-      const appData = await invoke('get_app_data_dir') as string;
-      return join(appData, 'live2d-mascot', 'settings.json');
-    } catch {
-      return join('live2d-mascot', 'settings.json');
-    }
-  }
-
-  async function getOverlayConfigPath(): Promise<string> {
-    try {
-      const appData = await invoke('get_app_data_dir') as string;
-      return join(appData, 'live2d-mascot', 'overlay-config.json');
-    } catch {
-      return join('live2d-mascot', 'overlay-config.json');
-    }
   }
 
   return {

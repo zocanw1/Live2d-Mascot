@@ -70,6 +70,34 @@ pub fn get_app_data_dir() -> Result<String, String> {
     Ok(dir.to_string_lossy().to_string())
 }
 
+/// Simpan file config (mis. settings.json / overlay-config.json) ke folder
+/// data app. Dipakai frontend agar save/load tidak bergantung pada path-scope
+/// plugin fs (yang sempat gagal karena path dobel-nested).
+#[tauri::command]
+pub fn save_config_file(filename: String, content: String) -> Result<(), String> {
+    let dir = dirs::data_dir()
+        .ok_or("Failed to get data directory")?
+        .join("live2d-mascot");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(&filename);
+    std::fs::write(&path, content)
+        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+}
+
+/// Baca file config dari folder data app. Bila file belum ada, kembalikan
+/// string kosong supaya caller memakai default.
+#[tauri::command]
+pub fn load_config_file(filename: String) -> Result<String, String> {
+    let dir = dirs::data_dir()
+        .ok_or("Failed to get data directory")?
+        .join("live2d-mascot");
+    let path = dir.join(&filename);
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Ok(content),
+        Err(_) => Ok(String::new()),
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScreenCapture {
@@ -361,6 +389,16 @@ pub fn open_models_folder(_app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn notify_overlay_config_change(config: OverlayConfig) -> Result<(), String> {
+    // Tulis runtime config agar overlay yang sedang berjalan bisa membaca
+    // perubahan (mis. lookAtEnabled, opacity) secara live tanpa restart.
+    let dir = dirs::data_dir()
+        .ok_or("Failed to get data directory")?
+        .join("live2d-mascot");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("overlay-runtime.json");
+    let json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
     println!("Overlay config changed: {:?}", config);
     Ok(())
 }

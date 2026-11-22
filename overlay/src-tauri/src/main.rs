@@ -86,6 +86,20 @@ fn get_cursor_pos() -> (i32, i32) {
     }
 }
 
+/// Baca runtime config yang ditulis Master (untuk live-update lookAtEnabled
+/// dll). Mengembalikan string kosong bila file belum ada.
+#[tauri::command]
+fn get_runtime_config() -> String {
+    let appdata = std::env::var("APPDATA").unwrap_or_default();
+    let path = std::path::Path::new(&appdata)
+        .join("live2d-mascot")
+        .join("overlay-runtime.json");
+    match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => String::new(),
+    }
+}
+
 pub fn run() {
     log_trace("run() called");
 
@@ -184,6 +198,7 @@ pub fn run() {
             set_ignore_cursor_events,
             get_init_data,
             get_cursor_pos,
+            get_runtime_config,
         ])
         .setup(|app| {
             log_trace("setup hook called");

@@ -104,6 +104,8 @@ pub fn run() {
             commands::stop_overlay,
             commands::read_file_content,
             commands::read_file_base64,
+            commands::save_config_file,
+            commands::load_config_file,
         ])
         .setup(|app| {
             let main_window = app.get_webview_window("main").unwrap();

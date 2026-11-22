@@ -224,6 +224,16 @@ function onTick(_deltaTime: number) {
   // Selaraskan alpha (tidak berpengaruh ke render v0.5, tapi untuk metadata).
   model.alpha = isHovering ? OVERLAY_HOVER_ALPHA : config.opacity;
 
+  // Look-at: arahkan pandangan model ke posisi kursor (bila diaktifkan).
+  // Fokus pakai koordinat layar (mx,my); pixi-live2d-display menangani transform.
+  if (config.lookAtEnabled) {
+    model.focus(mx, my);
+  } else {
+    // Look-at OFF -> reset fokus ke netral (0,0) supaya karakter langsung
+    // hadap depan, bukan menatap posisi kursor terakhir.
+    (model.internalModel as any).focusController?.focus(0, 0, true);
+  }
+
   if (++dbgFrame % 30 === 0) {
     console.log(
       `[DBG] cur=${osCursor.x},${osCursor.y} css=${Math.round(mx)},${Math.round(my)} ` +
@@ -306,6 +316,25 @@ async function main() {
       // ignore
     }
   }, 40);
+
+  // Poll runtime config dari Master (500ms) untuk live-update lookAtEnabled
+  // (dan field lain) tanpa perlu restart overlay.
+  setInterval(async () => {
+    try {
+      const raw = await invoke('get_runtime_config') as string;
+      if (raw) {
+        const rc = JSON.parse(raw);
+        if (typeof rc.lookAtEnabled === 'boolean') {
+          config.lookAtEnabled = rc.lookAtEnabled;
+        }
+        if (typeof rc.opacity === 'number') {
+          config.opacity = Math.max(0.05, Math.min(1, rc.opacity));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, 500);
 
   // Debug hook (DevTools/CDP).
   (window as any).__ovDbg = () => ({
