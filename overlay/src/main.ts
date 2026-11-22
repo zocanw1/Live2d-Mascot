@@ -62,6 +62,7 @@ let config: OverlayConfig = {
 let app: Application;
 let model: Live2DModel | null = null;
 let isHovering = false;
+let prevHovering = false;
 let lastMousePos = { x: 400, y: 400 };
 let hitTestInterval: ReturnType<typeof setInterval> | null = null;
 let cursorInterval: ReturnType<typeof setInterval> | null = null;
@@ -142,6 +143,9 @@ async function initPixi() {
   canvas.style.height = '100vh';
   canvas.style.pointerEvents = 'auto';
   canvas.style.zIndex = '999999';
+  // Transisi halus untuk hide/show (fade opacity). di-set sekali di sini,
+  // lalu di-toggle saat state hover berubah (bukan tiap frame).
+  canvas.style.transition = 'opacity 0.3s ease';
 
   window.addEventListener('resize', () => {
     app.renderer.resize(window.innerWidth, window.innerHeight);
@@ -197,13 +201,10 @@ function onTick(_deltaTime: number) {
   if (!model) return;
 
   // Hover detection via bounding box avatar, pakai posisi kursor OS (CSS).
-  // Saat model visible, perbarui cache bounds. Saat invisible, pakai cache
-  // supaya hover tidak berkedip.
-  if (model.visible) {
-    const vb = model.getBounds();
-    if (vb.width > 0 && vb.height > 0) {
-      cachedBounds = { x: vb.x, y: vb.y, width: vb.width, height: vb.height };
-    }
+  // Model selalu visible (render jalan); yang di-fade adalah opacity canvas.
+  const vb = model.getBounds();
+  if (vb.width > 0 && vb.height > 0) {
+    cachedBounds = { x: vb.x, y: vb.y, width: vb.width, height: vb.height };
   }
   const b = cachedBounds;
   const c = osCursorCss();
@@ -212,17 +213,12 @@ function onTick(_deltaTime: number) {
   const my = c.y - rect.top;
   isHovering = b.width > 0 && mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height;
 
-  // Fade: hover -> transparan penuh (invisible); sisanya -> opacity normal.
-  // Drag dinonaktifkan di overlay, jadi isHovering saja yang menentukan.
-  //
-  // PENTING: pixi-live2d-display v0.5.0 _render() mengabaikan Container.alpha,
-  // dan setModelOapcity() bentrok dengan sistem opacity motion (bikin model
-  // tidak muncul). Cara paling andal untuk show/hide adalah toggle
-  // model.visible -> saat false, PIXI melewati _render sepenuhnya.
-  if (isHovering) {
-    if (model.visible) model.visible = false;
-  } else {
-    if (!model.visible) model.visible = true;
+  // Transisi halus hide/show via CSS opacity pada canvas (bukan model.visible
+  // yang hard-toggle). Hanya update saat state hover BERUBAH supaya transisi
+  // CSS tidak di-reset tiap frame.
+  if (isHovering !== prevHovering) {
+    prevHovering = isHovering;
+    canvas.style.opacity = isHovering ? '0' : '1';
   }
   // Selaraskan alpha (tidak berpengaruh ke render v0.5, tapi untuk metadata).
   model.alpha = isHovering ? OVERLAY_HOVER_ALPHA : config.opacity;
@@ -230,7 +226,7 @@ function onTick(_deltaTime: number) {
   if (++dbgFrame % 30 === 0) {
     console.log(
       `[DBG] cur=${osCursor.x},${osCursor.y} css=${Math.round(mx)},${Math.round(my)} ` +
-      `hov=${isHovering} vis=${model.visible} a=${model.alpha.toFixed(2)} ` +
+      `hov=${isHovering} op=${canvas.style.opacity} a=${model.alpha.toFixed(2)} ` +
       `bounds=${Math.round(b.x)},${Math.round(b.y)},${Math.round(b.width)},${Math.round(b.height)} ` +
       `pos=${Math.round(model.position.x)},${Math.round(model.position.y)} ` +
       `win=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`
