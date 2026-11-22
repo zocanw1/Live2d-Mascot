@@ -1,0 +1,33 @@
+{
+  "name": "live2d-mascot-master",
+  "version": "1.0.0",
+  "description": "Live2D Mascot Master Control Panel (OBS-style)",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build:frontend": "vite build",
+    "build": "npm run build:frontend && tauri build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
+    "@tauri-apps/plugin-opener": "^2.0.0",
+    "@tauri-apps/plugin-process": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "vue": "^3.4.0",
+    "pinia": "^2.1.0",
+    "vue-router": "^4.3.0",
+    "pixi.js": "^7.0.0",
+    "pixi-live2d-display": "^0.5.0-beta",
+    "live2dcubismcore": "^1.0.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "vue-tsc": "^2.0.0"
+  }
+}

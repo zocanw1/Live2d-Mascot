@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+overlay/node_modules/
+master-app/node_modules/
+
+# Build outputs
+dist/
+overlay/dist/
+master-app/dist/
+
+# Rust / Tauri build artifacts
+target/
+overlay/src-tauri/target/
+master-app/src-tauri/target/
+
+# Tauri bundle / wix intermediates
+overlay/src-tauri/target/release/bundle/
+master-app/src-tauri/target/release/bundle/
+
+# Logs & debug traces
+*.log
+trace.log
+panic.log
+error.log
+overlay_stdout.log
+overlay_stderr.log
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
