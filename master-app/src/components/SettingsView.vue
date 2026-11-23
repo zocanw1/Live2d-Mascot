@@ -2,7 +2,7 @@
 import { useSettingsStore } from '@/stores/settings';
 import { useOverlayStore } from '@/stores/overlay';
 import { useModelStore } from '@/stores/model';
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 
 const settingsStore = useSettingsStore();
@@ -11,6 +11,7 @@ const modelStore = useModelStore();
 
 const testPosition = ref({ x: 100, y: 100 });
 const showResetConfirm = ref(false);
+const capturingHotkey = ref(false);
 
 const modelsForSelect = computed(() => modelStore.models.map(m => ({ value: m.id, label: m.name })));
 
@@ -41,6 +42,69 @@ async function testPositionApply() {
     settingsStore.updateOverlayConfig('position', testPosition.value);
   }
 }
+
+// ===== Push-to-talk hotkey capture =====
+function startCaptureHotkey() {
+  capturingHotkey.value = true;
+}
+
+function finishCapture(hotkey: string) {
+  settingsStore.overlayConfig.voice.pttHotkey = hotkey;
+  settingsStore.overlayConfig.voice.pttMouseButton = '';
+  capturingHotkey.value = false;
+  settingsStore.saveOverlayConfig();
+}
+
+function handleKeyCapture(e: KeyboardEvent) {
+  if (!capturingHotkey.value) return;
+  // Tunggu tombol non-modifier.
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  const parts: string[] = [];
+  if (e.ctrlKey) parts.push('Ctrl');
+  if (e.shiftKey) parts.push('Shift');
+  if (e.altKey) parts.push('Alt');
+  if (e.metaKey) parts.push('Super');
+
+  let key = e.key;
+  if (key === ' ') key = 'Space';
+  else if (key === 'Escape') { capturingHotkey.value = false; return; }
+  else if (key.length === 1) key = key.toUpperCase();
+  parts.push(key);
+
+  finishCapture(parts.join('+'));
+}
+
+// Mouse side buttons: 3 = Back (Mouse4 / XBUTTON1), 4 = Forward (Mouse5 / XBUTTON2).
+function handleMouseCapture(e: MouseEvent) {
+  if (!capturingHotkey.value) return;
+  if (e.button === 3 || e.button === 4) {
+    e.preventDefault();
+    e.stopPropagation();
+    const button = e.button === 3 ? 'Mouse4' : 'Mouse5';
+    settingsStore.overlayConfig.voice.pttMouseButton = button;
+    settingsStore.overlayConfig.voice.pttHotkey = '';
+    capturingHotkey.value = false;
+    settingsStore.saveOverlayConfig();
+  }
+}
+
+const pttLabel = computed(() => {
+  const mouse = settingsStore.overlayConfig.voice.pttMouseButton;
+  if (mouse) return `${mouse} (mouse)`;
+  return settingsStore.overlayConfig.voice.pttHotkey || 'Belum diset';
+});
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeyCapture, true);
+  window.addEventListener('mousedown', handleMouseCapture, true);
+});
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyCapture, true);
+  window.removeEventListener('mousedown', handleMouseCapture, true);
+});
 </script>
 
 <template>
@@ -124,6 +188,68 @@ async function testPositionApply() {
 
         <div class="setting-actions">
           <button class="btn btn-secondary" @click="resetOverlayConfig">Reset to Defaults</button>
+        </div>
+      </section>
+
+      <!-- Voice Assistant Section -->
+      <section class="settings-section">
+        <h2 class="section-title">Voice Assistant (AI)</h2>
+
+        <div class="setting-group">
+          <label class="setting-toggle">
+            <input type="checkbox" v-model="settingsStore.overlayConfig.voice.enabled" @change="saveAll" />
+            <span class="toggle-slider"></span>
+            <span class="toggle-label">Aktifkan Voice Assistant</span>
+          </label>
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">Groq API Key (Whisper STT)</label>
+          <input type="password" class="setting-input" v-model="settingsStore.overlayConfig.voice.groqApiKey" @change="saveAll" placeholder="gsk_..." autocomplete="off" />
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">Whisper Model</label>
+          <select class="setting-select" v-model="settingsStore.overlayConfig.voice.whisperModel" @change="saveAll">
+            <option value="whisper-large-v3">whisper-large-v3 (akurat, default)</option>
+            <option value="whisper-large-v3-turbo">whisper-large-v3-turbo (perlu di-enable di Groq)</option>
+          </select>
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">LLM Endpoint</label>
+          <input type="text" class="setting-input" v-model="settingsStore.overlayConfig.voice.llmEndpoint" @change="saveAll" placeholder="http://localhost:20128/v1" />
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">LLM API Key</label>
+          <input type="password" class="setting-input" v-model="settingsStore.overlayConfig.voice.llmApiKey" @change="saveAll" placeholder="sk-..." autocomplete="off" />
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">LLM Model</label>
+          <input type="text" class="setting-input" v-model="settingsStore.overlayConfig.voice.llmModel" @change="saveAll" placeholder="claude-mycombo" />
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">System Prompt</label>
+          <textarea class="setting-input" rows="2" v-model="settingsStore.overlayConfig.voice.systemPrompt" @change="saveAll"></textarea>
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-toggle">
+            <input type="checkbox" v-model="settingsStore.overlayConfig.voice.ttsEnabled" @change="saveAll" />
+            <span class="toggle-slider"></span>
+            <span class="toggle-label">Bacakan balasan (Text-to-Speech)</span>
+          </label>
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">Push-To-Talk Bind</label>
+          <button class="btn btn-secondary" @click="startCaptureHotkey">
+            {{ capturingHotkey ? 'Tekan tombol keyboard / mouse samping...' : pttLabel }}
+          </button>
+          <p class="setting-hint">Klik tombol di atas, lalu tekan kombinasi tombol keyboard <b>atau</b> tombol mouse samping (Mouse4/Back atau Mouse5/Forward). Esc untuk batal.</p>
         </div>
       </section>
 
@@ -278,6 +404,18 @@ async function testPositionApply() {
   color: var(--fg-primary);
   font-size: 13px;
   transition: all var(--transition);
+}
+
+textarea.setting-input {
+  resize: vertical;
+  min-height: 52px;
+  font-family: inherit;
+}
+
+.setting-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--fg-muted);
 }
 
 .setting-input:focus {

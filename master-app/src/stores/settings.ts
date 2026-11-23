@@ -1,7 +1,21 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { OverlayConfig, AppSettings } from '@/types';
+import type { OverlayConfig, AppSettings, VoiceConfig } from '@/types';
 import { invoke } from '@tauri-apps/api/core';
+
+const DEFAULT_VOICE_CONFIG: VoiceConfig = {
+  enabled: false,
+  groqApiKey: '',
+  whisperModel: 'whisper-large-v3',
+  llmEndpoint: 'http://localhost:20128/v1',
+  llmApiKey: '',
+  llmModel: 'claude-mycombo',
+  systemPrompt: 'Kamu adalah asisten AI yang ramah dan membantu. Jawab singkat dan jelas dalam bahasa Indonesia.',
+  ttsVoice: 'id-ID-GadisNeural',
+  ttsEnabled: true,
+  pttHotkey: 'Ctrl+Shift+Space',
+  pttMouseButton: '',
+};
 
 const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   modelId: '',
@@ -12,6 +26,7 @@ const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   fpsLimit: 60,
   opacity: 1.0,
   alwaysOnTop: true,
+  voice: DEFAULT_VOICE_CONFIG,
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -41,7 +56,11 @@ export const useSettingsStore = defineStore('settings', () => {
       const overlayContent = await invoke('load_config_file', { filename: 'overlay-config.json' }) as string;
       if (overlayContent) {
         const saved = JSON.parse(overlayContent);
-        overlayConfig.value = { ...DEFAULT_OVERLAY_CONFIG, ...saved };
+        overlayConfig.value = {
+          ...DEFAULT_OVERLAY_CONFIG,
+          ...saved,
+          voice: { ...DEFAULT_VOICE_CONFIG, ...(saved.voice || {}) },
+        };
       }
     } catch (e) {
       console.error('loadSettings error:', e);

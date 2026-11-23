@@ -388,9 +388,9 @@ pub fn open_models_folder(_app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn notify_overlay_config_change(config: OverlayConfig) -> Result<(), String> {
-    // Tulis runtime config agar overlay yang sedang berjalan bisa membaca
-    // perubahan (mis. lookAtEnabled, opacity) secara live tanpa restart.
+pub fn notify_overlay_config_change(config: serde_json::Value) -> Result<(), String> {
+    // Tulis runtime config (raw JSON) agar overlay yang sedang berjalan bisa
+    // membaca perubahan (lookAtEnabled, opacity, voice, dll) secara live.
     let dir = dirs::data_dir()
         .ok_or("Failed to get data directory")?
         .join("live2d-mascot");
@@ -399,7 +399,7 @@ pub fn notify_overlay_config_change(config: OverlayConfig) -> Result<(), String>
     let json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
     std::fs::write(&path, json)
         .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
-    println!("Overlay config changed: {:?}", config);
+    println!("Overlay config changed");
     Ok(())
 }
 

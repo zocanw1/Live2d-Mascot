@@ -25,6 +25,9 @@ error.log
 overlay_stdout.log
 overlay_stderr.log
 
+# Local secrets (voice test key)
+master-app/public/voice-test-key.js
+
 # OS files
 Thumbs.db
 Desktop.ini

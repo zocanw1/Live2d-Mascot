@@ -10,6 +10,20 @@ export interface Live2DModel {
   lastUsedAt?: number;
 }
 
+export interface VoiceConfig {
+  enabled: boolean;
+  groqApiKey: string;
+  whisperModel: string;
+  llmEndpoint: string;
+  llmApiKey: string;
+  llmModel: string;
+  systemPrompt: string;
+  ttsVoice: string;
+  ttsEnabled: boolean;
+  pttHotkey: string;
+  pttMouseButton: string;
+}
+
 export interface OverlayConfig {
   modelId: string;
   position: { x: number; y: number };
@@ -19,6 +33,7 @@ export interface OverlayConfig {
   fpsLimit: 30 | 60;
   opacity: number;
   alwaysOnTop: boolean;
+  voice: VoiceConfig;
 }
 
 export interface AppSettings {

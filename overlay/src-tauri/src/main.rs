@@ -1,7 +1,197 @@
 use std::sync::Mutex;
 use std::io::Write;
-use tauri::{Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+/// State untuk menyimpan shortcut PTT yang sedang aktif (agar bisa di-unregister
+/// saat hotkey diganti).
+struct PttState {
+    current: Mutex<Option<Shortcut>>,
+}
+
+// ===== Push-To-Talk via tombol mouse samping (Mouse4/Mouse5) =====
+// tauri-plugin-global-shortcut hanya mendukung tombol KEYBOARD, sehingga tombol
+// mouse samping (XBUTTON1/XBUTTON2) tidak bisa dibind lewat hotkey biasa. Kita
+// pasang low-level mouse hook (WH_MOUSE_LL) yang mendeteksi tombol samping secara
+// global dan meng-emit "ptt-down"/"ptt-up" ke window overlay.
+//
+// MOUSE_PTT: 0 = nonaktif, 1 = Mouse4 (XBUTTON1/Back), 2 = Mouse5 (XBUTTON2/Forward).
+// Diubah via command set_mouse_ptt dari JS (tanpa perlu restart hook).
+#[cfg(target_os = "windows")]
+static MOUSE_PTT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+#[cfg(target_os = "windows")]
+static MOUSE_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn mouse_ptt_proc(
+    ncode: i32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, MSLLHOOKSTRUCT, HHOOK, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    };
+    // ncode == HC_ACTION (0) -> ada event mouse.
+    if ncode == 0 {
+        let id = wparam.0 as u32;
+        if id == WM_XBUTTONDOWN || id == WM_XBUTTONUP {
+            // mouseData high-word: 1 = XBUTTON1 (Mouse4), 2 = XBUTTON2 (Mouse5).
+            let data = (*(lparam.0 as *const MSLLHOOKSTRUCT)).mouseData;
+            let which = ((data >> 16) & 0xffff) as u32;
+            let cfg = MOUSE_PTT.load(std::sync::atomic::Ordering::Relaxed);
+            if cfg != 0 && which == cfg {
+                if let Some(app) = MOUSE_APP.get() {
+                    if let Some(win) = app.get_webview_window("main") {
+                        if id == WM_XBUTTONDOWN {
+                            let _ = win.emit("ptt-down", ());
+                        } else {
+                            let _ = win.emit("ptt-up", ());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CallNextHookEx(HHOOK::default(), ncode, wparam, lparam)
+}
+
+/// Pasang WH_MOUSE_LL hook pada thread khusus (butuh message loop sendiri).
+#[cfg(target_os = "windows")]
+fn start_mouse_ptt_hook(app: AppHandle) {
+    use windows::Win32::Foundation::{HINSTANCE, HWND};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, MSG, WH_MOUSE_LL,
+    };
+    let _ = MOUSE_APP.set(app);
+    std::thread::spawn(move || unsafe {
+        let hmod = GetModuleHandleW(None).unwrap_or_default();
+        // Simpan handle hook selama proses hidup (tidak di-unhook).
+        let _hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_ptt_proc), HINSTANCE(hmod.0), 0);
+        log_trace("mouse PTT hook installed");
+        let mut msg = MSG::default();
+        loop {
+            let r = GetMessageW(&mut msg, HWND::default(), 0, 0);
+            if r.0 <= 0 {
+                break; // 0 = WM_QUIT, -1 = error
+            }
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        log_trace("mouse PTT message loop ended");
+    });
+}
+
+/// Atur tombol mouse samping untuk push-to-talk.
+/// `button`: "" (nonaktif) | "Mouse4"/"Back" (XBUTTON1) | "Mouse5"/"Forward" (XBUTTON2).
+#[tauri::command]
+fn set_mouse_ptt(button: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let code = match button.trim().to_ascii_lowercase().as_str() {
+            "" | "none" => 0u32,
+            "mouse4" | "xbutton1" | "back" => 1,
+            "mouse5" | "xbutton2" | "forward" => 2,
+            _ => 0,
+        };
+        MOUSE_PTT.store(code, std::sync::atomic::Ordering::SeqCst);
+        log_trace(&format!("set_mouse_ptt: {:?} -> {}", button, code));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = button;
+    }
+    Ok(())
+}
+
+/// Konversi nama tombol (mis. "Space", "E", "F5") ke Code.
+fn key_to_code(key: &str) -> Option<Code> {
+    let bytes = key.as_bytes();
+    if bytes.len() == 1 {
+        let c = bytes[0].to_ascii_uppercase();
+        let code = match c {
+            b'A' => Code::KeyA, b'B' => Code::KeyB, b'C' => Code::KeyC, b'D' => Code::KeyD,
+            b'E' => Code::KeyE, b'F' => Code::KeyF, b'G' => Code::KeyG, b'H' => Code::KeyH,
+            b'I' => Code::KeyI, b'J' => Code::KeyJ, b'K' => Code::KeyK, b'L' => Code::KeyL,
+            b'M' => Code::KeyM, b'N' => Code::KeyN, b'O' => Code::KeyO, b'P' => Code::KeyP,
+            b'Q' => Code::KeyQ, b'R' => Code::KeyR, b'S' => Code::KeyS, b'T' => Code::KeyT,
+            b'U' => Code::KeyU, b'V' => Code::KeyV, b'W' => Code::KeyW, b'X' => Code::KeyX,
+            b'Y' => Code::KeyY, b'Z' => Code::KeyZ,
+            b'0' => Code::Digit0, b'1' => Code::Digit1, b'2' => Code::Digit2, b'3' => Code::Digit3,
+            b'4' => Code::Digit4, b'5' => Code::Digit5, b'6' => Code::Digit6, b'7' => Code::Digit7,
+            b'8' => Code::Digit8, b'9' => Code::Digit9,
+            _ => return None,
+        };
+        return Some(code);
+    }
+    match key {
+        "Space" => Some(Code::Space),
+        "Enter" => Some(Code::Enter),
+        "Escape" => Some(Code::Escape),
+        "Tab" => Some(Code::Tab),
+        "Backspace" => Some(Code::Backspace),
+        "ArrowUp" => Some(Code::ArrowUp),
+        "ArrowDown" => Some(Code::ArrowDown),
+        "ArrowLeft" => Some(Code::ArrowLeft),
+        "ArrowRight" => Some(Code::ArrowRight),
+        "F1" => Some(Code::F1), "F2" => Some(Code::F2), "F3" => Some(Code::F3), "F4" => Some(Code::F4),
+        "F5" => Some(Code::F5), "F6" => Some(Code::F6), "F7" => Some(Code::F7), "F8" => Some(Code::F8),
+        "F9" => Some(Code::F9), "F10" => Some(Code::F10), "F11" => Some(Code::F11), "F12" => Some(Code::F12),
+        _ => None,
+    }
+}
+
+/// Parse string hotkey (mis. "Ctrl+Shift+Space") menjadi Shortcut.
+fn parse_hotkey(s: &str) -> Option<Shortcut> {
+    let mut modifiers = Modifiers::empty();
+    let mut code: Option<Code> = None;
+    for part in s.split('+') {
+        match part.trim() {
+            "Ctrl" | "Control" => modifiers |= Modifiers::CONTROL,
+            "Shift" => modifiers |= Modifiers::SHIFT,
+            "Alt" => modifiers |= Modifiers::ALT,
+            "Super" | "Win" | "Meta" => modifiers |= Modifiers::SUPER,
+            key => {
+                code = key_to_code(key);
+            }
+        }
+    }
+    code.map(|c| Shortcut::new(Some(modifiers), c))
+}
+
+/// Daftarkan/ ganti shortcut push-to-talk secara dinamis dari hotkey string.
+#[tauri::command]
+fn set_ptt_shortcut(app: AppHandle, state: State<'_, PttState>, hotkey: String) -> Result<(), String> {
+    // Unregister shortcut lama (bila ada).
+    if let Some(old) = state.current.lock().unwrap().take() {
+        let _ = app.global_shortcut().unregister(old);
+    }
+    // Hotkey kosong = nonaktifkan shortcut keyboard (mis. saat PTT pakai tombol mouse).
+    if hotkey.trim().is_empty() {
+        log_trace("ptt shortcut cleared");
+        return Ok(());
+    }
+    let shortcut = parse_hotkey(&hotkey)
+        .ok_or_else(|| format!("invalid hotkey: {}", hotkey))?;
+    let app_handle = app.clone();
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if let Some(win) = app_handle.get_webview_window("main") {
+                match event.state {
+                    ShortcutState::Pressed => {
+                        let _ = win.emit("ptt-down", ());
+                    }
+                    ShortcutState::Released => {
+                        let _ = win.emit("ptt-up", ());
+                    }
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    *state.current.lock().unwrap() = Some(shortcut);
+    log_trace(&format!("ptt shortcut set: {}", hotkey));
+    Ok(())
+}
 
 fn log_trace(msg: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(r"C:\coding\AI\Star-Stella\live2d-mascot\trace.log") {
@@ -100,6 +290,90 @@ fn get_runtime_config() -> String {
     }
 }
 
+/// Parse nilai JSON pertama dari sebuah string, mengabaikan karakter/JSON lain
+/// di belakangnya. Diperlukan karena sebagian gateway LLM (mis. localhost:20128)
+/// mengembalikan objek JSON diikuti penanda SSE `data: [DONE]` -> kalau di-parse
+/// strict akan error "trailing characters".
+fn parse_first_json(s: &str) -> Option<serde_json::Value> {
+    serde_json::Deserializer::from_str(s)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .and_then(Result::ok)
+}
+
+/// Transkripsi audio ke teks via Groq Whisper API.
+/// `audio` = byte audio (webm/ogg/wav/mp3), `api_key` = Groq key, `model` = whisper model.
+const GROQ_TRANSCRIBE_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
+
+#[tauri::command]
+async fn transcribe_audio(audio: Vec<u8>, api_key: String, model: String) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let part = reqwest::multipart::Part::bytes(audio)
+        .file_name("audio.webm")
+        .mime_str("audio/webm")
+        .map_err(|e| e.to_string())?;
+    let form = reqwest::multipart::Form::new()
+        .text("model", model)
+        .text("response_format", "json".to_string())
+        .part("file", part);
+
+    let resp = client
+        .post(GROQ_TRANSCRIBE_URL)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("transcribe request failed: {}", e))?;
+
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("groq error {}: {}", status, text));
+    }
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(json["text"].as_str().unwrap_or("").to_string())
+}
+
+/// Kirim chat ke LLM (OpenAI-compatible endpoint) dan kembalikan balasan teks.
+/// `messages_json` = JSON array messages, `endpoint` = base URL (mis. http://localhost:20128/v1).
+#[tauri::command]
+async fn chat_completion(
+    messages_json: String,
+    endpoint: String,
+    api_key: String,
+    model: String,
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let messages: serde_json::Value =
+        serde_json::from_str(&messages_json).map_err(|e| e.to_string())?;
+    let body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+    });
+
+    let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("llm request failed: {}", e))?;
+
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("llm error {}: {}", status, text));
+    }
+    // Toleran terhadap trailing data (mis. `data: [DONE]` dari gateway lokal).
+    let json: serde_json::Value = parse_first_json(&text)
+        .ok_or_else(|| "llm response bukan JSON valid".to_string())?;
+    Ok(json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string())
+}
+
 pub fn run() {
     log_trace("run() called");
 
@@ -193,15 +467,24 @@ pub fn run() {
             }
         })
         .manage(Mutex::new(init_data))
+        .manage(PttState { current: Mutex::new(None) })
         .invoke_handler(tauri::generate_handler![
             log_js,
             set_ignore_cursor_events,
             get_init_data,
             get_cursor_pos,
             get_runtime_config,
+            transcribe_audio,
+            chat_completion,
+            set_ptt_shortcut,
+            set_mouse_ptt,
         ])
         .setup(|app| {
             log_trace("setup hook called");
+
+            // Pasang low-level mouse hook untuk PTT tombol mouse samping.
+            #[cfg(target_os = "windows")]
+            start_mouse_ptt_hook(app.handle().clone());
 
             // Buang title bar putih & buat window menutupi seluruh monitor.
             // (fullscreen:true di config menyebabkan title bar muncul di Windows
@@ -231,7 +514,10 @@ pub fn run() {
                         }
                     }
                 })?;
-            log_trace("global shortcut registered");
+
+            // Push-to-talk hotkey didaftarkan dinamis via command set_ptt_shortcut
+            // (dipanggil dari JS saat voiceConfig.pttHotkey berubah).
+            log_trace("global shortcuts registered");
             Ok(())
         })
         .on_window_event(|_window, event| {
